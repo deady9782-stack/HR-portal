@@ -31,7 +31,7 @@ const reviewChannelId = process.env.APPLICATION_REVIEW_CHANNEL_ID;
 const commands = [
   new SlashCommandBuilder()
     .setName("portal")
-    .setDescription("Get the link to the personnel portal."),
+    .setDescription("Open the Civic Operations personnel portal."),
   new SlashCommandBuilder()
     .setName("apply")
     .setDescription("Submit a staff application for human review."),
@@ -66,7 +66,7 @@ async function handleChatCommand(interaction: ChatInputCommandInteraction) {
         .setURL(portalUrl.toString());
 
       await interaction.reply({
-        content: `Personnel portal: ${portalUrl.toString()}`,
+        content: `Civic Operations Personnel Portal: ${portalUrl.toString()}`,
         components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button)],
         ephemeral: true,
       });

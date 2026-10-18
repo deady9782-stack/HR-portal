@@ -2,18 +2,24 @@
   "name": "hr-portal-cad",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "bot:dev": "node --env-file=.env.local --import tsx --watch bot/index.ts"
+    "bot:dev": "node --env-file=.env.local --import tsx --watch bot/index.ts",
+    "admin:grant": "node --env-file=.env.local --import tsx scripts/grant-admin.ts"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
     "discord.js": "^14.19.0",
+    "firebase": "^13.0.0",
+    "firebase-admin": "^14.5.0",
     "lucide-react": "^0.468.0",
-    "next": "^15.1.0",
+    "next": "^16.4.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -23,10 +29,13 @@
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.17.0",
-    "eslint-config-next": "^15.1.0",
+    "eslint-config-next": "^16.4.2",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.6"
   }
 }

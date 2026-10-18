@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hr() {
+      return signedIn() && (request.auth.token.hr == true || request.auth.token.admin == true);
+    }
+
+    function ownUser(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function activeEmployee(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.staffStatus == "active";
+    }
+
+    function noActiveShift(uid) {
+      let profile = get(/databases/$(database)/documents/users/$(uid)).data;
+      return !("activeShiftId" in profile) || profile.activeShiftId == null;
+    }
+
+    match /users/{uid} {
+      allow create: if false;
+      allow read: if ownUser(uid) || hr();
+      allow update: if (hr()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["staffStatus", "department", "jobTitle", "activatedAt"]))
+        || (ownUser(uid)
+          && resource.data.staffStatus == "active"
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["activeShiftId"])
+          && request.resource.data.activeShiftId is string
+          && getAfter(/databases/$(database)/documents/shifts/$(request.resource.data.activeShiftId)).data.employeeUid == uid
+          && getAfter(/databases/$(database)/documents/shifts/$(request.resource.data.activeShiftId)).data.status == "on-duty"
+          && getAfter(/databases/$(database)/documents/shifts/$(request.resource.data.activeShiftId)).data.startedAt == request.time)
+        || (ownUser(uid)
+          && resource.data.staffStatus == "active"
+          && resource.data.activeShiftId is string
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["activeShiftId"])
+          && request.resource.data.activeShiftId == null
+          && getAfter(/databases/$(database)/documents/shifts/$(resource.data.activeShiftId)).data.status == "ended"
+          && getAfter(/databases/$(database)/documents/shifts/$(resource.data.activeShiftId)).data.endedAt == request.time);
+      allow delete: if false;
+    }
+
+    match /applications/{applicationId} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          "applicantUid", "applicantName", "applicantDiscordId", "department", "jobTitle",
+          "experience", "motivation", "status", "createdAt"
+        ])
+        && request.resource.data.applicantUid == request.auth.uid
+        && request.resource.data.applicantDiscordId == request.auth.token.discordId
+        && request.resource.data.applicantName
+          == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName
+        && request.resource.data.status == "submitted"
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.department is string
+        && request.resource.data.department.size() >= 2
+        && request.resource.data.department.size() <= 80
+        && request.resource.data.jobTitle is string
+        && request.resource.data.jobTitle.size() >= 2
+        && request.resource.data.jobTitle.size() <= 80
+        && request.resource.data.experience is string
+        && request.resource.data.experience.size() >= 20
+        && request.resource.data.experience.size() <= 2000
+        && request.resource.data.motivation is string
+        && request.resource.data.motivation.size() >= 20
+        && request.resource.data.motivation.size() <= 2000;
+      allow read: if hr() || (signedIn() && resource.data.applicantUid == request.auth.uid);
+      allow update: if hr()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "reviewedAt"])
+        && request.resource.data.status in ["reviewing", "interview", "accepted", "declined"]
+        && request.resource.data.reviewedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /shifts/{shiftId} {
+      allow create: if signedIn()
+        && request.resource.data.employeeUid == request.auth.uid
+        && activeEmployee(request.auth.uid)
+        && noActiveShift(request.auth.uid)
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.activeShiftId == shiftId
+        && request.resource.data.keys().hasOnly([
+          "employeeUid", "employeeName", "department", "startedAt", "endedAt", "endNote", "status"
+        ])
+        && request.resource.data.employeeName
+          == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName
+        && request.resource.data.department
+          == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.department
+        && request.resource.data.startedAt == request.time
+        && request.resource.data.endedAt == null
+        && request.resource.data.endNote == ""
+        && request.resource.data.status == "on-duty";
+      allow read: if hr() || (signedIn() && resource.data.employeeUid == request.auth.uid);
+      allow update: if signedIn()
+        && resource.data.employeeUid == request.auth.uid
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.activeShiftId == shiftId
+        && resource.data.status == "on-duty"
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["endedAt", "endNote", "status"])
+        && request.resource.data.endedAt == request.time
+        && request.resource.data.status == "ended"
+        && request.resource.data.endNote is string
+        && request.resource.data.endNote.size() <= 1000
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.activeShiftId == null;
+      allow delete: if false;
+    }
+  }
+}
