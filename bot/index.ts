@@ -1,5 +1,8 @@
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChatInputCommandInteraction,
   Client,
   EmbedBuilder,
   Events,
@@ -8,157 +11,180 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
-  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
 
-const token = process.env.DISCORD_BOT_TOKEN;
-const clientId = process.env.DISCORD_CLIENT_ID;
-const guildId = process.env.DISCORD_GUILD_ID;
-const portalUrl = process.env.PORTAL_URL;
-const reviewChannelId = process.env.APPLICATION_REVIEW_CHANNEL_ID;
-
-if (!token || !clientId) {
-  throw new Error("Set DISCORD_BOT_TOKEN and DISCORD_CLIENT_ID before starting the bot.");
+function requireEnvironmentValue(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} must be set in .env.local.`);
+  }
+  return value;
 }
 
-const departments = [
-  "Moderator", "Administrator", "HR", "FTO", "Police", "Fire", "EMS", "DOT",
-  "SWAT", "K9", "Traffic Enforcement", "Judge", "CSI", "Detective", "Coroner",
-];
+const botToken = requireEnvironmentValue("DISCORD_BOT_TOKEN");
+const clientId = requireEnvironmentValue("DISCORD_CLIENT_ID");
+const guildId = process.env.DISCORD_GUILD_ID;
+const reviewChannelId = process.env.APPLICATION_REVIEW_CHANNEL_ID;
 
 const commands = [
   new SlashCommandBuilder()
     .setName("portal")
-    .setDescription("Get the personnel portal link"),
+    .setDescription("Get the link to the personnel portal."),
   new SlashCommandBuilder()
     .setName("apply")
-    .setDescription("Start a department application"),
-];
-
-const rest = new REST({ version: "10" }).setToken(token);
-const commandRoute = guildId
-  ? Routes.applicationGuildCommands(clientId, guildId)
-  : Routes.applicationCommands(clientId);
+    .setDescription("Submit a staff application for human review."),
+].map((command) => command.toJSON());
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-client.once(Events.ClientReady, (readyClient) => {
-  console.log(`Personnel bot ready as ${readyClient.user.tag}`);
-});
-
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (interaction.isChatInputCommand()) {
-    if (interaction.commandName === "portal") {
-      await interaction.reply({
-        content: portalUrl
-          ? `Personnel portal: ${portalUrl}`
-          : "The portal URL has not been configured yet.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    if (interaction.commandName === "apply") {
-      const departmentMenu = new StringSelectMenuBuilder()
-        .setCustomId("application-department")
-        .setPlaceholder("Choose a department")
-        .addOptions(departments.map((department) => ({ label: department, value: department })));
-      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(departmentMenu);
-      await interaction.reply({
-        content: "Choose a department to begin. Application answers are sent to the configured review channel.",
-        components: [row],
-        ephemeral: true,
-      });
-      return;
-    }
+function getPortalUrl(): URL {
+  const configuredUrl = process.env.PORTAL_URL;
+  if (!configuredUrl) {
+    throw new Error("PORTAL_URL is not set in .env.local.");
   }
 
-  if (interaction.isStringSelectMenu() && interaction.customId === "application-department") {
-    const department = interaction.values[0];
-    const modal = new ModalBuilder()
-      .setCustomId(`application:${department}`)
-      .setTitle(`${department} application`);
+  const normalizedUrl = /^https?:\/\//i.test(configuredUrl)
+    ? configuredUrl
+    : `https://${configuredUrl}`;
+  const url = new URL(normalizedUrl);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("PORTAL_URL must use HTTP or HTTPS.");
+  }
 
-    const characterName = new TextInputBuilder()
-      .setCustomId("character-name")
-      .setLabel("Roleplay character name")
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setMaxLength(80);
-    const experience = new TextInputBuilder()
-      .setCustomId("experience")
-      .setLabel("Server RP experience and relevant rank")
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setMaxLength(120);
-    const motivation = new TextInputBuilder()
-      .setCustomId("motivation")
-      .setLabel("Why are you applying to this department?")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-      .setMaxLength(900);
-    const scenario = new TextInputBuilder()
-      .setCustomId("scenario")
-      .setLabel("How would you handle a conflicting call report?")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-      .setMaxLength(900);
+  return url;
+}
 
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(characterName),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(experience),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(motivation),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(scenario),
-    );
-    await interaction.showModal(modal);
+async function handleChatCommand(interaction: ChatInputCommandInteraction) {
+  if (interaction.commandName === "portal") {
+    try {
+      const portalUrl = getPortalUrl();
+      const button = new ButtonBuilder()
+        .setLabel("Open Personnel Portal")
+        .setStyle(ButtonStyle.Link)
+        .setURL(portalUrl.toString());
+
+      await interaction.reply({
+        content: `Personnel portal: ${portalUrl.toString()}`,
+        components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button)],
+        ephemeral: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown configuration error.";
+      await interaction.reply({
+        content: `The portal link is unavailable: ${message}`,
+        ephemeral: true,
+      });
+    }
     return;
   }
 
-  if (interaction.isModalSubmit() && interaction.customId.startsWith("application:")) {
-    if (!reviewChannelId) {
-      await interaction.reply({
-        content: "Applications are not available yet. The review channel has not been configured.",
-        ephemeral: true,
-      });
-      return;
-    }
+  if (interaction.commandName === "apply") {
+    const modal = new ModalBuilder()
+      .setCustomId("staff-application")
+      .setTitle("Staff Application")
+      .addComponents(
+        createInput("display_name", "Preferred/display name", TextInputStyle.Short, 80),
+        createInput("roblox_username", "Roblox username", TextInputStyle.Short, 40),
+        createInput("department", "Department applying for", TextInputStyle.Short, 80),
+        createInput("experience", "Relevant experience", TextInputStyle.Paragraph, 1000),
+        createInput("motivation", "Why do you want to join?", TextInputStyle.Paragraph, 1000),
+      );
 
-    const channel = await client.channels.fetch(reviewChannelId);
-    if (!channel || !channel.isTextBased() || !("send" in channel)) {
-      await interaction.reply({
-        content: "The configured application review channel is unavailable. Please contact an administrator.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const department = interaction.customId.slice("application:".length);
-    const embed = new EmbedBuilder()
-      .setTitle(`New ${department} application`)
-      .setColor(0x397765)
-      .addFields(
-        { name: "Discord applicant", value: `${interaction.user.tag} (${interaction.user.id})` },
-        { name: "Character", value: interaction.fields.getTextInputValue("character-name") },
-        { name: "Experience / rank", value: interaction.fields.getTextInputValue("experience") },
-        { name: "Motivation", value: interaction.fields.getTextInputValue("motivation") },
-        { name: "Scenario response", value: interaction.fields.getTextInputValue("scenario") },
-      )
-      .setFooter({ text: "Human review required · submission is not an acceptance or denial" })
-      .setTimestamp();
-
-    await channel.send({ embeds: [embed] });
-    await interaction.reply({
-      content: "Application received for human review. This bot does not make interview or hiring decisions.",
-      ephemeral: true,
-    });
+    await interaction.showModal(modal);
   }
+}
+
+function createInput(
+  id: string,
+  label: string,
+  style: TextInputStyle,
+  maxLength: number,
+) {
+  const input = new TextInputBuilder()
+    .setCustomId(id)
+    .setLabel(label)
+    .setStyle(style)
+    .setMaxLength(maxLength)
+    .setRequired(true);
+
+  return new ActionRowBuilder<TextInputBuilder>().addComponents(input);
+}
+
+async function handleApplication(interaction: import("discord.js").ModalSubmitInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  if (!reviewChannelId) {
+    await interaction.editReply(
+      "Applications cannot be submitted right now: APPLICATION_REVIEW_CHANNEL_ID is not configured.",
+    );
+    return;
+  }
+
+  const channel = await client.channels.fetch(reviewChannelId);
+  if (!channel || !channel.isTextBased() || !("send" in channel)) {
+    throw new Error("APPLICATION_REVIEW_CHANNEL_ID does not point to a text channel the bot can access.");
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle("New Staff Application")
+    .setColor(0x2563eb)
+    .setTimestamp()
+    .addFields(
+      { name: "Applicant", value: `${interaction.user.tag} (${interaction.user.id})` },
+      { name: "Preferred/display name", value: interaction.fields.getTextInputValue("display_name") },
+      { name: "Roblox username", value: interaction.fields.getTextInputValue("roblox_username") },
+      { name: "Department", value: interaction.fields.getTextInputValue("department") },
+      { name: "Relevant experience", value: interaction.fields.getTextInputValue("experience") },
+      { name: "Motivation", value: interaction.fields.getTextInputValue("motivation") },
+    );
+
+  await channel.send({
+    embeds: [embed],
+    allowedMentions: { parse: [] },
+  });
+  await interaction.editReply("Your application was sent to the staff review team.");
+}
+
+client.on(Events.InteractionCreate, (interaction) => {
+  const handler = interaction.isChatInputCommand()
+    ? handleChatCommand(interaction)
+    : interaction.isModalSubmit() && interaction.customId === "staff-application"
+      ? handleApplication(interaction)
+      : Promise.resolve();
+
+  void handler.catch(async (error: unknown) => {
+    console.error("Failed to handle Discord interaction:", error);
+    const message = "Something went wrong while handling that request. Please try again later.";
+    if (interaction.isRepliable()) {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: message, ephemeral: true }).catch(console.error);
+      } else {
+        await interaction.reply({ content: message, ephemeral: true }).catch(console.error);
+      }
+    }
+  });
 });
 
-void rest.put(commandRoute, { body: commands.map((command) => command.toJSON()) })
-  .then(() => client.login(token))
-  .catch((error: unknown) => {
-    console.error("Failed to register commands or start the bot.", error);
-    process.exitCode = 1;
-  });
+client.once(Events.ClientReady, (readyClient) => {
+  console.log(`Discord bot ready as ${readyClient.user.tag}.`);
+});
+
+async function start() {
+  const rest = new REST({ version: "10" }).setToken(botToken);
+  if (guildId) {
+    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+    console.log(`Registered slash commands for development guild ${guildId}.`);
+  } else {
+    await rest.put(Routes.applicationCommands(clientId), { body: commands });
+    console.log("Registered global slash commands; global updates may take time to appear.");
+  }
+
+  await client.login(botToken);
+}
+
+void start().catch((error: unknown) => {
+  console.error("Failed to start Discord bot:", error);
+  process.exitCode = 1;
+});

@@ -26,7 +26,7 @@ Copy `.env.example` to `.env.local` and set `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT
 - Signature-required clock in/out controls with device-local timestamps
 - Department application intake with guided interview prompts
 - Signup role choice for Employee, FTO staff, or HR staff; FTO/HR access requests require administrator review
-- Discord `/portal` and `/apply` commands with human-reviewed application delivery
+- Discord `/portal` and `/apply` commands; `/apply` collects applicant details in a modal and sends them to the configured review channel
 - Example rank ladders and 2-hour promotion eligibility indicator
 - Review-first activity and end-of-shift note workflow
 
